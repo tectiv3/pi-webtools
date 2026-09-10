@@ -51,6 +51,9 @@ importers:
       '@earendil-works/pi-coding-agent':
         specifier: 0.85.1
         version: 0.85.1(ws@8.21.3)
+      '@earendil-works/pi-tui':
+        specifier: 0.85.1
+        version: 0.85.1
       '@types/cacache':
         specifier: ^20.0.1
         version: 20.0.1

@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
+    "@earendil-works/pi-tui": "0.85.1",
     "@types/cacache": "^20.0.1",
     "@types/html-to-text": "^9.0.4",
     "@types/jsdom": "^28.0.0",
