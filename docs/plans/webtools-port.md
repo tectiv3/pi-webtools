@@ -63,7 +63,7 @@ src/
                            # created in T2 (ContentFormat type only), completed in T9
   tools/
     web-search-tool.ts     # createWebSearchTool(context)
-    web-fetch-tool.ts      # createFetchWebsiteTool(context)
+    web-fetch-tool.ts      # createWebFetchTool(context)
   duckduckgo/  http/  page/  parsers/  text/  retrieval/  timing/  errors/  search/  cache/  renderers/
               # ported from original-src/ (see Stripping)
 scripts/smoke.ts

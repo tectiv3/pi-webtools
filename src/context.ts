@@ -48,7 +48,7 @@ export interface WebtoolsContext {
  * Construct the shared extension state from the resolved configuration.
  *
  * @param config - The fully resolved environment configuration.
- * @returns The shared state consumed by `createWebSearchTool` and `createFetchWebsiteTool`.
+ * @returns The shared state consumed by `createWebSearchTool` and `createWebFetchTool`.
  */
 export function createWebtoolsContext(config: WebtoolsConfig): WebtoolsContext {
   const impit = createImpit(config.browser)
