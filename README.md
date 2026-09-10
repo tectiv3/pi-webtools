@@ -3,6 +3,14 @@
 pi coding-agent extension adding `web_search` (DuckDuckGo) and `web_fetch` (readability → markdown),
 ported from the MIT-licensed LM Studio plugin `lms-plugin-web-tools`.
 
+## Screenshots
+
+`web_search` and `web_fetch` in pi's TUI — the call line shows the query / URL and params:
+
+| `web_search` | `web_fetch` |
+| --- | --- |
+| ![web_search in pi's TUI](docs/screenshots/web_search.png) | ![web_fetch in pi's TUI](docs/screenshots/web_fetch.png) |
+
 ## Tools
 
 - **`web_search`** — search the web via DuckDuckGo.
