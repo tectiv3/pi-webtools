@@ -33,6 +33,7 @@ This document is the single source of truth for the port. It supersedes `HANDOFF
 | D6 | Lifecycle | Shared state (config, Impit, limiters, caches, retry) constructed **once per extension load** in the default-export function; `pi.on("session_shutdown")` hook performs **best-effort** teardown — the ported `RateLimiter` exposes only `wait`/`schedule` (no pause/drain) and `Impit.close()` is unverified, so teardown is a no-op unless an API exists (check impit's types after install; add a close call only if it exists). Original code never tears down. | Matches original per-session construction in `tools-provider.ts`; pi re-runs the default export on reload (new jiti module instance). Disk cache survives across loads. |
 | D7 | Smoke testability | `scripts/smoke.ts` loads the **real** `src/index.ts` default export with a stub `ExtensionAPI` (records `registerTool` + `on` calls), then invokes the captured `execute(toolCallId, params, signal, onUpdate, ctx)` directly | Exercises the real entry, TypeBox schemas, and execute wiring — no shadow implementation. |
 | D8 | Checks & commits | Subagents never run checks/formatters; main agent runs `tsc` before every commit; `.git/hooks/pre-commit` (local, like openclient-llm's) auto-formats staged TS with prettier and blocks non-tsc-clean commits | Keeps the clean-tree invariant: every committed state typechecks. Subagents stay pure writers; the commit is the verification gate. |
+| D9 | TS resolution | tsconfig uses `module: esnext` + `moduleResolution: bundler`, **not** NodeNext | Discovered at T2's first typecheck: the original uses extensionless relative imports throughout; NodeNext ESM would force a `.js`-extension rewrite of every import line, breaking verbatim-ness against `original-src/` (the diff-against-original reviewability the port depends on). The actual runtime is jiti (bundler semantics — pi's extension loader), so bundler resolution is the honest check. Side note: one apparent strict error (`excerpt.ts` implicit `any`) vanished with the fix — it was a cascade of the unresolved imports. |
 
 ## pi extension API (verified against pi 0.85.1)
 
@@ -317,7 +318,7 @@ Rules:
 
 | # | Task (subagent) | Delivers | Depends on |
 |---|---|---|---|
-| T1 | Scaffold | `package.json` fixes (deps per Dependencies section), `tsconfig.json` (NodeNext, ES2023, strict, noEmit, include src+scripts) | — (main agent: pnpm install, hook verify, commit) |
+| T1 | Scaffold | `package.json` fixes (deps per Dependencies section), `tsconfig.json` (module esnext, moduleResolution **bundler**, ES2023, strict, noEmit, include src+scripts) | — (main agent: pnpm install, hook verify, commit) |
 | T2 | Leaf modules | `src/text/` (all 6), `src/retrieval/` (all 5), `src/search/` (all 3; zod→TypeBox conversion per Stripping), `src/timing/rate-limiter.ts` + trimmed `src/timing/index.ts`, `src/config.ts` stub (ContentFormat type only) | T1 |
 | T3 | HTTP + errors (circular pair — port together) | `src/http/` (all 13; `url-schema.ts` zod→TypeBox, `fetch.ts` JSDoc fix), `src/errors/` (6; kind trim, warn-param drop, PDF message fix, index trim) | T2 |
 | T4 | Parsers | `src/parsers/page-text.ts` (ContentFormat re-target to `../config`), `parse-html.ts`, trimmed `index.ts` | T3 |
