@@ -4,10 +4,11 @@ Port of the MIT-licensed `npacker/web-tools` LM Studio plugin (repo deleted; ori
 recovered at `original-src/`, kept unmodified) into a lightweight pi coding-agent extension with
 two tools: `web_search` (DuckDuckGo) and `web_fetch` (readability → markdown).
 
-**Read `HANDOFF.md` first.** It contains the approved design decisions, the strip/keep file map,
-the pi `registerTool` mapping, config env vars, and the test plan. The global AGENTS.md rules
-apply: subagents for implementation (~30-50 turn bounded deliverables, one at a time), main
-agent owns verification and all git commits, never push, `pnpm` not npm, `uv` not pip.
+**Read `docs/plans/webtools-port.md` first.** It is the single source of truth: resolved design
+decisions (D1–D7), the complete strip/keep file map, the pi `registerTool` mapping, config env
+vars, return shapes, and the smoke + verification plans. The global AGENTS.md rules apply:
+subagents for implementation (~30-50 turn bounded deliverables, one at a time), main agent owns
+verification and all git commits, never push, `pnpm` not npm, `uv` not pip.
 
 Project specifics:
 
