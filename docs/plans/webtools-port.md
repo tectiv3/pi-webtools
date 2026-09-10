@@ -32,6 +32,7 @@ This document is the single source of truth for the port. It supersedes `HANDOFF
 | D5 | Module format | ESM source (`"type": "module"`); `tsconfig` `module: NodeNext`, `target: ES2023`, `strict`, `noEmit` | pi loads extensions via jiti (`loader.ts`: `createJiti(...).import(path)`), which handles TS + ESM/CJS interop. `file-type` v22 is ESM-only, so ESM is the natural fit. |
 | D6 | Lifecycle | Shared state (config, Impit, limiters, caches, retry) constructed **once per extension load** in the default-export function; `pi.on("session_shutdown")` hook performs **best-effort** teardown — the ported `RateLimiter` exposes only `wait`/`schedule` (no pause/drain) and `Impit.close()` is unverified, so teardown is a no-op unless an API exists (check impit's types after install; add a close call only if it exists). Original code never tears down. | Matches original per-session construction in `tools-provider.ts`; pi re-runs the default export on reload (new jiti module instance). Disk cache survives across loads. |
 | D7 | Smoke testability | `scripts/smoke.ts` loads the **real** `src/index.ts` default export with a stub `ExtensionAPI` (records `registerTool` + `on` calls), then invokes the captured `execute(toolCallId, params, signal, onUpdate, ctx)` directly | Exercises the real entry, TypeBox schemas, and execute wiring — no shadow implementation. |
+| D8 | Checks & commits | Subagents never run checks/formatters; main agent runs `tsc` before every commit; `.git/hooks/pre-commit` (local, like openclient-llm's) auto-formats staged TS with prettier and blocks non-tsc-clean commits | Keeps the clean-tree invariant: every committed state typechecks. Subagents stay pure writers; the commit is the verification gate. |
 
 ## pi extension API (verified against pi 0.85.1)
 
@@ -58,7 +59,7 @@ src/
   index.ts                 # pi extension entry: default export (pi: ExtensionAPI)
   context.ts               # createWebtoolsContext(config) → shared runtime state
   config.ts                # env-var config resolution (replaces config-schematics.ts + resolve-config.ts);
-                           # created in run 1 (ContentFormat type only), completed in run 2
+                           # created in T2 (ContentFormat type only), completed in T9
   tools/
     web-search-tool.ts     # createWebSearchTool(context)
     web-fetch-tool.ts      # createFetchWebsiteTool(context)
@@ -91,9 +92,9 @@ Keep with edits (barrel + branch trimming — the "missing-module" chains):
 
 - `cache/index.ts`: drop re-exports of `imageSearchCacheKey` + `ImageSearchResultsPayload`.
 - `cache/search-cache-key.ts`: keep `webSearchCacheKey` but **drop the `enriched` 5th param**
-  (enrichment gone; cache dir is fresh so the key-format change is safe). Keep
-  `imageSearchCacheKey` deleted along with its payload file (it's in the same file —
-  remove both exports).
+  (enrichment gone; cache dir is fresh so the key-format change is safe).
+  **Delete** `imageSearchCacheKey` (it lives in the same file — remove the function;
+  its payload type is deleted with `cache/image-search-results-payload.ts`).
 - `errors/index.ts`: drop `NoImageResultsError` re-export.
 - `errors/no-results-error.ts`: drop `NoImageResultsError` class.
 - `errors/tool-error.ts`: `ToolErrorKind` → `"web-search" | "website"`; drop
@@ -115,9 +116,9 @@ Keep with edits (barrel + branch trimming — the "missing-module" chains):
   reword the comment (class deleted); code unchanged.
 - **`ContentFormat` type home** (run-1/run-2 boundary): `parsers/page-text.ts` and
   `renderers/page-result.ts` do `import type { ContentFormat } from "../config/resolve-config"`.
-  Run 1 creates `src/config.ts` containing ONLY `export type ContentFormat = "markdown" | "text"`
-  (re-exported via no barrel — import path `../config`), and re-targets those two imports
-  to `../config`. Run 2 extends the same `src/config.ts` with the full env-var resolver
+  T2 creates `src/config.ts` containing ONLY `export type ContentFormat = "markdown" | "text"`
+  (no barrel — import path `../config`), and re-targets those two imports
+  to `../config`. T9 extends the same `src/config.ts` with the full env-var resolver
   (do not create a second config module).
 - **zod → TypeBox** (zod is dropped as a dep; these are the only two kept modules using it
   besides the four tool files, which are rewritten anyway):
@@ -150,9 +151,10 @@ Deps: `mime-types`, `raw-body` (in `http/response-body.ts` / `page/page-kind.ts`
 Keep seeded list; **add**: `cacache ^20.0.4` (D2 reverted the in-memory decision),
 dev: `@earendil-works/pi-coding-agent` pinned to the installed pi version (`0.85.1` —
 typecheck-only, `import type`), plus `@types/cacache`, `@types/html-to-text`,
-`@types/jsdom`, `@types/mime-types`, `@types/turndown` (versions from
-`reference/original-package.json`). Not seeded, never add: zod, metascraper,
-@metascraper/helpers, unpdf, @opendocsg/pdf2md, @lmstudio/sdk, eslint/knip/prettier.
+`@types/jsdom`, `@types/mime-types`, `@types/turndown` and `prettier` (pre-commit
+hook auto-formatter; versions from `reference/original-package.json` where present).
+Not seeded, never add: zod, metascraper, @metascraper/helpers, unpdf,
+@opendocsg/pdf2md, @lmstudio/sdk, eslint/knip.
 
 ## Config — `src/config.ts` (replaces resolve-config.ts)
 
@@ -277,39 +279,58 @@ registered tools; invokes `execute` with a stub ctx. Scenarios (main agent runs 
    no connection attempted).
 7. `tsc --noEmit` clean (via `pnpm typecheck`) before smoke.
 
-## Verification plan (main agent owns all steps; subagents never deploy/test-remote/commit)
+## Verification plan (main agent owns ALL checks; subagents never run them)
 
-1. `pnpm install` (repo root; impit is a native darwin-arm64 module — pinned to this
-   platform). `pnpm typecheck` clean.
-2. `pnpm smoke` — all scenarios above pass.
+Subagents NEVER run `tsc`, `prettier`, `pnpm install`, or any test/check of their
+own. They write/modify files and report. The main agent runs every check and owns
+every commit. A local `.git/hooks/pre-commit` (like openclient-llm's) auto-formats
+staged TS with prettier and blocks any commit that is not tsc-clean — the
+**clean-tree invariant**: every committed state typechecks, because tasks are
+ordered in dependency batches (see Execution split) and each batch is committed
+only after the main agent's own `tsc --noEmit` passes.
+
+1. Per task: subagent delivers files → main agent runs `pnpm typecheck` (and
+   `pnpm install` only when deps changed) → main agent commits → hook re-asserts.
+2. After T11: `pnpm smoke` — all scenarios above pass (main agent, live).
 3. Install: remove any stale entry, then
    `ln -s "$(pwd)/src" ~/.pi/agent/extensions/webtools`.
 4. Live pi session: both tools appear; real search + fetch; truncation note visible;
    `findInPage` re-call works; 404/SSRF show as tool errors (`isError`), not crashes.
 5. `/reload` mid-session → tools still work; repeat search served from disk cache.
-6. Git commits between milestones (main agent only; never push).
+6. Never push to remote.
 
-## Execution split (subagents, strictly one at a time; main agent checkpoints between)
+## Execution split (sequential subagents, one task each, main agent commits after each)
 
-- **Run 1 — core port.** Fix `package.json` (add `cacache`, `@types/*`,
-  `@earendil-works/pi-coding-agent@0.85.1` dev pin); add `tsconfig.json`; create
-  `src/config.ts` with ONLY `export type ContentFormat = "markdown" | "text"` (the type
-  home for run-1 files); port `http/ page/ parsers/ text/ retrieval/ timing/ errors/
-  search/ cache/` **and `duckduckgo/`** (moved into run 1: 
-  `cache/web-search-results-payload.ts` imports its `WebSearchResult` type, so cache/
-  cannot typecheck without it) **and `renderers/page-result.ts`** (keeps the ported set
-  self-consistent; `renderers/index.ts` trimmed to the one surviving export). Apply every
-  edit in the Stripping list (it is exhaustive for missing-module errors, including the
-  two `ContentFormat` import re-targets). `context.ts` + tools + full env resolver are
-  run 2. Checkpoint: `tsc --noEmit` clean over the ported tree.
-- **Run 2 — tools + entry + smoke + README.** Extend `src/config.ts` (created in run 1
-  with the `ContentFormat` type only) with the full env-var resolver; write `context.ts`,
-  `tools/web-search-tool.ts`, `tools/web-fetch-tool.ts`, `src/index.ts` (TypeBox
-  schemas, return shapes per The-two-tools, throw-on-error, `session_shutdown` hook),
-  apply the `fetchPage` → `{ page, cached }` change, write `scripts/smoke.ts` and
-  `README.md` (tools, params, env vars, origin/attribution). Checkpoint: typecheck
-  clean; smoke script compiles (live run is main-agent step 2).
-- **Main agent:** verification steps 1–6, commits between milestones.
+Rules:
+- **One subagent per task, strictly sequential** (never parallel).
+- Subagents **never run checks or formatters** (`tsc`, `prettier`, `pnpm`, tests) —
+  write/modify files, report what they did, stop.
+- Main agent after each task: `pnpm typecheck` (plus `pnpm install` when deps
+  changed) → review the diff → **commit** (pre-commit hook re-asserts prettier +
+  tsc-clean).
+- Every task is a **dependency batch**: it may import only from already-committed
+  batches + external deps, so every commit is tsc-clean (the clean-tree invariant).
+  Cross-module imports in the original are barrel imports (`from "../http"`), so a
+  batch = whole directories incl. trimmed barrels.
+- Porting = copy files from `original-src/`, apply exactly the edits named in the
+  Stripping list, keep JSDoc/style. No reformatting (the hook does formatting).
+
+| # | Task (subagent) | Delivers | Depends on |
+|---|---|---|---|
+| T1 | Scaffold | `package.json` fixes (deps per Dependencies section), `tsconfig.json` (NodeNext, ES2023, strict, noEmit, include src+scripts) | — (main agent: pnpm install, hook verify, commit) |
+| T2 | Leaf modules | `src/text/` (all 6), `src/retrieval/` (all 5), `src/search/` (all 3; zod→TypeBox conversion per Stripping), `src/timing/rate-limiter.ts` + trimmed `src/timing/index.ts`, `src/config.ts` stub (ContentFormat type only) | T1 |
+| T3 | HTTP + errors (circular pair — port together) | `src/http/` (all 13; `url-schema.ts` zod→TypeBox, `fetch.ts` JSDoc fix), `src/errors/` (6; kind trim, warn-param drop, PDF message fix, index trim) | T2 |
+| T4 | Parsers | `src/parsers/page-text.ts` (ContentFormat re-target to `../config`), `parse-html.ts`, trimmed `index.ts` | T3 |
+| T5 | DuckDuckGo | `src/duckduckgo/` (all 5, verbatim) | T4 |
+| T6 | Cache | `src/cache/ttl-cache.ts`, `search-cache-key.ts` (4-arg key, image exports deleted), `web-search-results-payload.ts`, trimmed `index.ts` | T5 |
+| T7 | Page | `src/page/` (3 files; PDF branch + kind trims; **apply the `fetchPage` → `{ page, cached }` change now**, with the `FetchedPage` return-shape update in the JSDoc) | T6 |
+| T8 | Renderers | `src/renderers/page-result.ts` (ContentFormat re-target), trimmed `index.ts` | T7 |
+| T9 | Config + context | Full env-var resolver in `src/config.ts` (per Config section; inline defaults), `src/context.ts` (per Shared-context section) | T8 |
+| T10 | Tools + entry | `src/tools/web-search-tool.ts`, `src/tools/web-fetch-tool.ts` (per The-two-tools: TypeBox schemas, flows, return shapes, URL guard, page normalization, throw-on-error), `src/index.ts` (registerTool wiring, session_shutdown hook) | T9 |
+| T11 | Smoke + README | `scripts/smoke.ts` (per Smoke plan — stub ExtensionAPI, 7 scenarios), `README.md` (tools, params, env vars, origin/attribution per LICENSE) | T10 |
+
+Main agent: per-task typecheck + commit (T1–T11), then verification steps 2–6
+(smoke, install, live pi, /reload).
 
 ## Out of scope
 
