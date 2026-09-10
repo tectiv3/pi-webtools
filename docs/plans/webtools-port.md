@@ -25,12 +25,12 @@ This document is the single source of truth for the port. It supersedes `HANDOFF
 
 | # | Decision | Resolution | Rationale (verified against pi 0.85.1 docs at the pnpm store + pi source at ~/code/pi-mono) |
 |---|---|---|---|
-| D1 | Error signaling | Tools **throw** `new Error(formatToolError(...))` from `execute`; never return error strings | pi: "To mark a tool execution as failed (sets `isError: true` …), throw an error from `execute`. Returning a value never sets the error flag." (extensions.md; `agent-loop.ts:708-715` wraps the throw in `createErrorToolResult(message)` + `isError: true`, message reaches the LLM). Original `formatToolError()` per-kind message templates are kept verbatim as the thrown messages, incl. the abort case. |
+| D1 | Error signaling | Tools **throw** `new Error(formatToolError(...))` from `execute`; never return error strings | pi: "To mark a tool execution as failed (sets `isError: true` …), throw an error from `execute`. Returning a value never sets the error flag." (extensions.md; verified in pi source: the throw is caught and wrapped in `createErrorToolResult(message)` + `isError: true`, message reaches the LLM). Original `formatToolError()` per-kind message templates are kept as the thrown messages, incl. the abort case. |
 | D2 | Cache | **Disk**: port `cache/ttl-cache.ts` (cacache) + `search-cache-key.ts` + payload types | In-memory worst case is 50 × 5 MB raw HTML = 250 MB inside the pi process, and pi re-imports extensions on model switch/reload (`agent-session.ts` `_buildRuntime` → resource-loader reload; in-memory state explicitly not valid across reload), so a 15-min search cache would die on every reload. Disk cache is the original, battle-tested design and survives reload/restart. Staleness audit: search key includes query+safeSearch+page+maxResults; page cache stores raw `FetchedPage` keyed by URL only and extraction happens after cache read — config changes never serve stale rendered output. |
 | D3 | Cache dir | `os.tmpdir()/pi-webtools-cache`, subdirs `search/` and `website/` (as in original `tools-provider.ts`), env override `WEBTOOLS_CACHE_DIR` | User decision. Wiped on reboot — fine for a TTL cache. |
 | D4 | Install | **Local symlink only**: `ln -s <repo>/src ~/.pi/agent/extensions/webtools`; repo-root `package.json` + `node_modules` | pi auto-discovers `~/.pi/agent/extensions/*/index.ts` (extensions.md:118) and resolves deps from "a `package.json` next to your extension (or in a parent directory)" (extensions.md:148). Matches the user's existing rc/subagent/ask-user-question symlink pattern. No npm publishing this milestone. |
 | D5 | Module format | ESM source (`"type": "module"`); `tsconfig` `module: NodeNext`, `target: ES2023`, `strict`, `noEmit` | pi loads extensions via jiti (`loader.ts`: `createJiti(...).import(path)`), which handles TS + ESM/CJS interop. `file-type` v22 is ESM-only, so ESM is the natural fit. |
-| D6 | Lifecycle | Shared state (config, Impit, limiters, caches, retry) constructed **once per extension load** in the default-export function; `pi.on("session_shutdown")` hook performs **best-effort** teardown — the ported `RateLimiter`/`PerHostRateLimiter` expose only `wait`/`schedule` (no pause/drain) and `Impit.close()` is unverified, so teardown is a no-op unless an API exists (check impit's types after install; add a close call only if it exists). Original code never tears down. | Matches original per-session construction in `tools-provider.ts`; pi re-runs the default export on reload (new jiti module instance). Disk cache survives across loads. |
+| D6 | Lifecycle | Shared state (config, Impit, limiters, caches, retry) constructed **once per extension load** in the default-export function; `pi.on("session_shutdown")` hook performs **best-effort** teardown — the ported `RateLimiter` exposes only `wait`/`schedule` (no pause/drain) and `Impit.close()` is unverified, so teardown is a no-op unless an API exists (check impit's types after install; add a close call only if it exists). Original code never tears down. | Matches original per-session construction in `tools-provider.ts`; pi re-runs the default export on reload (new jiti module instance). Disk cache survives across loads. |
 | D7 | Smoke testability | `scripts/smoke.ts` loads the **real** `src/index.ts` default export with a stub `ExtensionAPI` (records `registerTool` + `on` calls), then invokes the captured `execute(toolCallId, params, signal, onUpdate, ctx)` directly | Exercises the real entry, TypeBox schemas, and execute wiring — no shadow implementation. |
 
 ## pi extension API (verified against pi 0.85.1)
@@ -57,7 +57,8 @@ name the tool explicitly.
 src/
   index.ts                 # pi extension entry: default export (pi: ExtensionAPI)
   context.ts               # createWebtoolsContext(config) → shared runtime state
-  config.ts                # env-var config resolution (replaces config-schematics.ts + resolve-config.ts)
+  config.ts                # env-var config resolution (replaces config-schematics.ts + resolve-config.ts);
+                           # created in run 1 (ContentFormat type only), completed in run 2
   tools/
     web-search-tool.ts     # createWebSearchTool(context)
     web-fetch-tool.ts      # createFetchWebsiteTool(context)
@@ -83,6 +84,8 @@ Delete wholesale:
 | `config/config-schematics.ts`, `config/auto-sentinel.ts` | LM Studio UI schematics |
 | `fs/` (all) | LM Studio home dir + image output paths |
 | `renderers/image-results.ts` | image rendering |
+| `timing/per-host-rate-limiter.ts` | enrichment-fan-out only; unused after strip (see context) |
+| `config/config-defaults.ts` | NOT ported — it carries dead fields post-strip (`enrichResults`, limit toggles, image fields); the surviving defaults are inlined as literals in `config.ts` (see Config below) |
 
 Keep with edits (barrel + branch trimming — the "missing-module" chains):
 
@@ -96,7 +99,10 @@ Keep with edits (barrel + branch trimming — the "missing-module" chains):
 - `errors/tool-error.ts`: `ToolErrorKind` → `"web-search" | "website"`; drop
   image-search/image-download templates; **drop the `context.warn` param** (original
   signature `formatToolError(error, context: {warn}, kind)` — LM Studio logger has no
-  pi equivalent; warnings were diagnostic-only, drop them).
+  pi equivalent; warnings were diagnostic-only, drop them); drop `PDF` from the
+  `website` unsupported-content-type message ("only handle HTML, PDF, plain text, and
+  JSON" → "HTML, plain text, and JSON") — PDF kind is stripped, the old message would
+  advertise unsupported format.
 - `parsers/index.ts`: drop re-exports of `extractPdfContent`, `extractPageImages`,
   all `image-extensions` exports.
 - `renderers/index.ts`: drop `renderImageResults` + `ImageSubject` re-exports
@@ -104,6 +110,15 @@ Keep with edits (barrel + branch trimming — the "missing-module" chains):
 - `page/fetch-page.ts`: `decodeFetchedPage()` has a `kind === "pdf"` branch importing
   `extractPdfContent` — remove the branch (PDF kind is stripped from `page-kind.ts`).
 - `page/page-kind.ts`: drop `pdf` + `image` kinds; keep `html` / `text` / `json`.
+- `timing/index.ts`: drop the `PerHostRateLimiter` re-export (module deleted, see context).
+- `http/fetch.ts`: JSDoc on the `RequestLimiter` interface references `PerHostRateLimiter` —
+  reword the comment (class deleted); code unchanged.
+- **`ContentFormat` type home** (run-1/run-2 boundary): `parsers/page-text.ts` and
+  `renderers/page-result.ts` do `import type { ContentFormat } from "../config/resolve-config"`.
+  Run 1 creates `src/config.ts` containing ONLY `export type ContentFormat = "markdown" | "text"`
+  (re-exported via no barrel — import path `../config`), and re-targets those two imports
+  to `../config`. Run 2 extends the same `src/config.ts` with the full env-var resolver
+  (do not create a second config module).
 - **zod → TypeBox** (zod is dropped as a dep; these are the only two kept modules using it
   besides the four tool files, which are rewritten anyway):
   - `search/search-page-parameter.ts`: convert the zod schema to
@@ -118,10 +133,14 @@ Keep with edits (barrel + branch trimming — the "missing-module" chains):
 - `tools-provider.ts` → replaced by `context.ts` + `index.ts` (do not port directly).
 - `config/resolve-config.ts` → replaced by `config.ts` (env vars; see Config below).
 
-Everything else ports verbatim or near-verbatim: `duckduckgo/` (all 5 files),
-`http/` (all 13), `page/` (3), `parsers/page-text.ts` + `parse-html.ts`, `text/` (all 6),
-`retrieval/` (all 5), `timing/` (all 3), `search/` (all 3), `errors/` (6),
-`cache/ttl-cache.ts` + `search-cache-key.ts` + `web-search-results-payload.ts`.
+Everything else ports verbatim or near-verbatim — a file is verbatim ONLY if it is not
+named in the edit list above:
+`duckduckgo/` (all 5), `http/` (all 13, minus the two named edits), `page/` (3, minus the
+two named edits), `parsers/page-text.ts` (minus the ContentFormat re-target) +
+`parse-html.ts`, `text/` (all 6), `retrieval/` (all 5), `errors/` (6, minus the named trim),
+`timing/rate-limiter.ts` + trimmed `timing/index.ts`, `search/` (all 3, minus the zod
+conversion), `cache/ttl-cache.ts` + `search-cache-key.ts` (edited) +
+`web-search-results-payload.ts`.
 
 Deps: `mime-types`, `raw-body` (in `http/response-body.ts` / `page/page-kind.ts`),
 `file-type` (magic-number sniffing in `page/page-kind.ts`) survive.
@@ -137,7 +156,9 @@ typecheck-only, `import type`), plus `@types/cacache`, `@types/html-to-text`,
 
 ## Config — `src/config.ts` (replaces resolve-config.ts)
 
-Env vars, resolved once at extension load, defaults from `config/config-defaults.ts`:
+Env vars, resolved once at extension load. Defaults are the surviving values from the
+original `config/config-defaults.ts`, inlined as literals here (that file is not ported —
+it also carries dead fields):
 
 | Env var | Default | Meaning |
 |---|---|---|
@@ -157,12 +178,13 @@ Env vars, resolved once at extension load, defaults from `config/config-defaults
 | `WEBTOOLS_CACHE_DIR` | `os.tmpdir()/pi-webtools-cache` | cacache root (new) |
 
 `config.ts` must also export the **derived** values the original computed in
-`resolveConfig` (critic issue: the stride math lives in `resolve-config.ts`, NOT in
-`search/`):
+`resolveConfig` — the stride math lived in `resolve-config.ts`, NOT in `search/`, so
+`config.ts` owns it:
 
-- `webMaxResults` (the cap; env sets it directly, no "limit" toggle — no Infinity mode)
-- `webPageStride = WEBTOOLS_MAX_RESULTS` when capped, else `30`
-  (`WEB_NATIVE_PAGE_SIZE`; DDG html endpoint returns ~30/page)
+- `webMaxResults` (the cap; env sets it directly — no "limit" toggle, no Infinity mode)
+- `webPageStride = webMaxResults` (flat). The original's uncapped fallback of 30
+  (`WEB_NATIVE_PAGE_SIZE`; DDG html endpoint returns ~30/page) is a DEAD branch without
+  the toggle — do not implement a toggle or a conditional.
 - `maxResponseBytes = WEBTOOLS_MAX_RESPONSE_MB * 1024 * 1024`
 - `retryPolicy: RetryOptions` (maxRetries, backoff seconds)
 - TTLs in ms, `requestIntervalMs`
@@ -193,7 +215,9 @@ tools, and hooks `pi.on("session_shutdown", …)` (best-effort/no-op teardown pe
 - Params (TypeBox): `query: Type.String()`;
   `page: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 }))` (default 1).
 - Flow (ported from `tools/web-search-tool.ts`, enrichment stripped):
-  search-cache lookup (`webSearchCacheKey` 4-arg form) → on miss `searchWeb` via
+  normalize `page = params.page ?? 1` FIRST (before the cache key is built — a raw
+  `undefined` must never land in the key string) → search-cache lookup
+  (`webSearchCacheKey` 4-arg form) → on miss `searchWeb` via
   `fetchOrThrow` (shared rate limiter, retry, `signal`, `onFailedAttempt:
   createRetryNotifier(...)`) → `NoWebResultsError` when zero → cache set → return.
   `stripSnippets` kept (env-driven).
@@ -212,9 +236,13 @@ tools, and hooks `pi.on("session_shutdown", …)` (best-effort/no-op teardown pe
 - Params (TypeBox): `url: Type.String()`; `findInPage: Type.Optional(Type.Array(Type.String()))`;
   `maxChars: Type.Optional(Type.Integer({ minimum: 100, maximum: 100_000 }))`.
 - Flow (ported from `tools/visit-website-tool.ts` + `renderers/page-result.ts`):
-  `fetchPage(impit, pageCache, url, {signal, retry, onFailedAttempt, maxBytes, limiter})`
-  → `renderPageResult(url, page, {contentLimit: params.maxChars ?? config, findInPage,
-  contentFormat})`.
+  URL guard → `fetchPage(impit, pageCache, url, {signal, retry, onFailedAttempt, maxBytes,
+  limiter})` → `renderPageResult(url, page, {contentLimit: params.maxChars ?? config,
+  findInPage, contentFormat})`.
+- **URL guard** (replaces the zod runtime validation): `new URL(url)` — on `TypeError`
+  throw the tool error (wrapped through `formatToolError` so the message is formatted,
+  never a raw uncaught TypeError); then if `!isHttpUrl(parsed)` throw
+  "URL must use http or https" (same message as the original schema refinement).
 - **`cached` flag** (original surface has none — `fetchPage` swallows the lookup):
   change `fetchPage` to return `{ page, cached }` (D2-faithful alternative rejected:
   pre-checking `pageCache.get` before `fetchPage` would double the lookup and drift from
@@ -264,16 +292,18 @@ registered tools; invokes `execute` with a stub ctx. Scenarios (main agent runs 
 ## Execution split (subagents, strictly one at a time; main agent checkpoints between)
 
 - **Run 1 — core port.** Fix `package.json` (add `cacache`, `@types/*`,
-  `@earendil-works/pi-coding-agent@0.85.1` dev pin); add `tsconfig.json`; port
-  `http/ page/ parsers/ text/ retrieval/ timing/ errors/ search/ cache/` **and
-  `duckduckgo/`** (duckduckgo moved into run 1: `cache/web-search-results-payload.ts`
-  imports its `WebSearchResult` type, so cache/ cannot typecheck without it) **and
-  `renderers/page-result.ts`** (keeps the ported set self-consistent;
-  `renderers/index.ts` trimmed to the one surviving export). `config.ts` + `context.ts`
-  are run 2 (they exist to serve the tools). Checkpoint: `tsc --noEmit` clean over the
-  ported tree (no dangling imports — the stripping list above is exhaustive for
-  missing-module errors).
-- **Run 2 — tools + entry + smoke + README.** Write `config.ts`, `context.ts`,
+  `@earendil-works/pi-coding-agent@0.85.1` dev pin); add `tsconfig.json`; create
+  `src/config.ts` with ONLY `export type ContentFormat = "markdown" | "text"` (the type
+  home for run-1 files); port `http/ page/ parsers/ text/ retrieval/ timing/ errors/
+  search/ cache/` **and `duckduckgo/`** (moved into run 1: 
+  `cache/web-search-results-payload.ts` imports its `WebSearchResult` type, so cache/
+  cannot typecheck without it) **and `renderers/page-result.ts`** (keeps the ported set
+  self-consistent; `renderers/index.ts` trimmed to the one surviving export). Apply every
+  edit in the Stripping list (it is exhaustive for missing-module errors, including the
+  two `ContentFormat` import re-targets). `context.ts` + tools + full env resolver are
+  run 2. Checkpoint: `tsc --noEmit` clean over the ported tree.
+- **Run 2 — tools + entry + smoke + README.** Extend `src/config.ts` (created in run 1
+  with the `ContentFormat` type only) with the full env-var resolver; write `context.ts`,
   `tools/web-search-tool.ts`, `tools/web-fetch-tool.ts`, `src/index.ts` (TypeBox
   schemas, return shapes per The-two-tools, throw-on-error, `session_shutdown` hook),
   apply the `fetchPage` → `{ page, cached }` change, write `scripts/smoke.ts` and
