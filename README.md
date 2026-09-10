@@ -18,9 +18,11 @@ ported from the MIT-licensed LM Studio plugin `lms-plugin-web-tools`.
 
 ## Install
 
-Dev workflow (no npm publish):
+Requires Node >= 22.19 and pnpm.
 
 ```sh
+git clone https://github.com/tectiv3/pi-webtools
+cd pi-webtools
 pnpm install
 ln -s "$(pwd)/src" ~/.pi/agent/extensions/webtools
 ```
@@ -55,7 +57,8 @@ Resolved once per extension load from environment variables:
 - `pnpm smoke` — live end-to-end smoke test (`scripts/smoke.ts`): hits the real internet
   (DuckDuckGo, example.com, Wikipedia, httpbin) and writes to the on-disk cache dir.
 - Pre-commit hook: auto-formats staged TS with prettier and blocks any commit that is not
-  tsc-clean (clean-tree invariant — every committed state typechecks).
+  tsc-clean (clean-tree invariant — every committed state typechecks). Enable per clone:
+  `git config core.hooksPath scripts` (the hook lives at `scripts/pre-commit`).
 
 ## Origin & attribution
 

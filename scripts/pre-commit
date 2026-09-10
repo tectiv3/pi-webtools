@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Pre-commit hook: TypeScript (prettier auto-format + tsc clean-tree check).
+# Mirrors openclient-llm's hook structure (no Swift, no eslint in this repo).
+# Every commit must leave the tree tsc-clean: tasks are ported in
+# import-closed batches so intermediate states typecheck (see
+# docs/plans/webtools-port.md, Execution split).
+set -euo pipefail
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+
+# Nothing to do unless there are any TS sources at all (first commits).
+if ! find "$REPO_ROOT/src" "$REPO_ROOT/scripts" -name '*.ts' 2>/dev/null | grep -q .; then
+    exit 0
+fi
+
+# Prettier: auto-format staged TS files, re-stage.
+STAGED_TS=$(git diff --cached --name-only --diff-filter=ACM -- 'src/*.ts' 'src/**/*.ts' 'scripts/*.ts' 'scripts/**/*.ts' || true)
+
+if [ -n "$STAGED_TS" ]; then
+    PRETTIER_BIN="$REPO_ROOT/node_modules/.bin/prettier"
+    if [ -x "$PRETTIER_BIN" ]; then
+        for FILE in $STAGED_TS; do
+            [ -f "$FILE" ] || continue
+            "$PRETTIER_BIN" --write "$FILE" --log-level error 2>/dev/null || true
+            git add "$FILE"
+        done
+    fi
+fi
+
+# tsc: type-check the whole tree — block on any error (clean-tree invariant,
+# no baseline: every committed state must be tsc-clean).
+TSC_BIN="$REPO_ROOT/node_modules/.bin/tsc"
+if [ -x "$TSC_BIN" ] && [ -f "$REPO_ROOT/tsconfig.json" ]; then
+    TSC_RAW=$(cd "$REPO_ROOT" && "$TSC_BIN" --noEmit 2>&1 | grep "error TS" || true)
+    if [ -n "$TSC_RAW" ]; then
+        echo "pre-commit: TypeScript errors (every commit must be tsc-clean):"
+        echo "$TSC_RAW"
+        exit 1
+    fi
+fi
