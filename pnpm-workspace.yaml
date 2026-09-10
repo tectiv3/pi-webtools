@@ -1,8 +1,10 @@
 allowBuilds:
-  '@google/genai': set this to true or false
+  # Dev-only type dependency chain (pi-coding-agent -> pi-ai -> @google/genai -> protobufjs);
+  # their postinstall scripts are not needed for typechecking.
+  '@google/genai': false
   esbuild: true
   impit: true
-  protobufjs: set this to true or false
+  protobufjs: false
 onlyBuiltDependencies:
   - impit
   - esbuild

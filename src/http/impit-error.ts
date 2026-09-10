@@ -7,29 +7,29 @@
  */
 
 import {
-  ConnectError,
-  DecodingError,
-  ImpitError,
-  NetworkError,
-  ProtocolError,
-  TimeoutError,
-  TransportError,
-  UnsupportedProtocol,
-} from "impit"
+    ConnectError,
+    DecodingError,
+    ImpitError,
+    NetworkError,
+    ProtocolError,
+    TimeoutError,
+    TransportError,
+    UnsupportedProtocol,
+} from 'impit/errors.js' // root entry omits these at runtime despite index.d.ts declaring them
 
-import { errorMessage } from "../errors"
+import { errorMessage } from '../errors'
 
-import { FetchError } from "./fetch-error"
+import { FetchError } from './fetch-error'
 
 /**
  * Concise summary and retry hint derived from an `impit` error's class.
  */
 export interface ImpitErrorClassification {
-  /** Short, user-facing description of the failure. */
-  summary: string
+    /** Short, user-facing description of the failure. */
+    summary: string
 
-  /** Whether the failure is transient and therefore worth retrying. */
-  retryable: boolean
+    /** Whether the failure is transient and therefore worth retrying. */
+    retryable: boolean
 }
 
 /**
@@ -43,39 +43,39 @@ export interface ImpitErrorClassification {
  * @returns The classification, or `undefined` when the value is not an `impit` error.
  */
 export function classifyImpitError(error: unknown): ImpitErrorClassification | undefined {
-  if (error instanceof TimeoutError) {
-    return { summary: "request timed out", retryable: true }
-  }
+    if (error instanceof TimeoutError) {
+        return { summary: 'request timed out', retryable: true }
+    }
 
-  if (error instanceof ConnectError) {
-    return { summary: "could not connect to server", retryable: true }
-  }
+    if (error instanceof ConnectError) {
+        return { summary: 'could not connect to server', retryable: true }
+    }
 
-  if (error instanceof NetworkError) {
-    return { summary: "connection failed before the response completed", retryable: true }
-  }
+    if (error instanceof NetworkError) {
+        return { summary: 'connection failed before the response completed', retryable: true }
+    }
 
-  if (error instanceof ProtocolError) {
-    return { summary: "server returned a malformed HTTP response", retryable: false }
-  }
+    if (error instanceof ProtocolError) {
+        return { summary: 'server returned a malformed HTTP response', retryable: false }
+    }
 
-  if (error instanceof DecodingError) {
-    return { summary: "could not decode the server response", retryable: false }
-  }
+    if (error instanceof DecodingError) {
+        return { summary: 'could not decode the server response', retryable: false }
+    }
 
-  if (error instanceof UnsupportedProtocol) {
-    return { summary: "unsupported URL scheme", retryable: false }
-  }
+    if (error instanceof UnsupportedProtocol) {
+        return { summary: 'unsupported URL scheme', retryable: false }
+    }
 
-  if (error instanceof TransportError) {
-    return { summary: "transport error", retryable: true }
-  }
+    if (error instanceof TransportError) {
+        return { summary: 'transport error', retryable: true }
+    }
 
-  if (error instanceof ImpitError) {
-    return { summary: "an unexpected transport error occurred", retryable: false }
-  }
+    if (error instanceof ImpitError) {
+        return { summary: 'an unexpected transport error occurred', retryable: false }
+    }
 
-  return undefined
+    return undefined
 }
 
 /**
@@ -90,12 +90,12 @@ export function classifyImpitError(error: unknown): ImpitErrorClassification | u
  * @returns A `FetchError` describing the transport failure.
  */
 export function wrapImpitError(error: unknown, url: string): FetchError {
-  const classification = classifyImpitError(error)
-  const message = classification?.summary ?? errorMessage(error)
-  const cause = classification === undefined ? error : undefined
+    const classification = classifyImpitError(error)
+    const message = classification?.summary ?? errorMessage(error)
+    const cause = classification === undefined ? error : undefined
 
-  return new FetchError(`Request failed: ${message}`, undefined, url, {
-    cause,
-    retryable: classification?.retryable,
-  })
+    return new FetchError(`Request failed: ${message}`, undefined, url, {
+        cause,
+        retryable: classification?.retryable,
+    })
 }

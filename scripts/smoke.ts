@@ -6,7 +6,8 @@
  * `execute` methods directly — exercising the TypeBox schemas, the full search/fetch
  * pipelines, and the disk cache.
  *
- * Run: `pnpm smoke` (i.e. `npx tsx scripts/smoke.ts`) from the repo root.
+ * Run: `pnpm smoke` (i.e. `jiti scripts/smoke.ts`) from the repo root. jiti is the same
+ * loader pi uses to load the extension, so this exercises the real module pipeline.
  *
  * WARNING: hits the live internet (DuckDuckGo, example.com, Wikipedia, httpbin.org) and
  * writes to the on-disk cache dir (default: os.tmpdir()/pi-webtools-cache, or
@@ -50,7 +51,7 @@ const pi = {
 } as unknown as ExtensionAPI
 
 // Load the real entry. The specifier is extensionless so `tsc --noEmit` (moduleResolution
-// bundler) resolves it to `src/index.ts` without `allowImportingTsExtensions`; tsx resolves
+// bundler) resolves it to `src/index.ts` without `allowImportingTsExtensions`; jiti resolves
 // the same target at runtime.
 const mod = await import('../src/index')
 mod.default(pi)

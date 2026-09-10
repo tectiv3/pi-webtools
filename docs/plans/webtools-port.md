@@ -333,6 +333,22 @@ Rules:
 Main agent: per-task typecheck + commit (T1–T11), then verification steps 2–6
 (smoke, install, live pi, /reload).
 
+## Runtime fixes (found during live smoke, post-T11)
+
+- **impit `^0.14.5`, not `^0.13.0`**: the recovered original imports impit's error-class
+  hierarchy (`ImpitError`/`ConnectError`/…), which exists only in impit 0.14.x — the
+  original's package.json is internally inconsistent with its own code. Bumped; the
+  fingerprinting library itself is unchanged.
+- **impit error classes import from `impit/errors.js`**: the package root entry omits them
+  at runtime (despite `index.d.ts` declaring them — upstream packaging bug; verified
+  against the 0.14.5 tarball). Type shim at `src/types/impit-errors.d.ts`; the classes are
+  reachable as CJS subpath exports (no `exports` map) and are the same module identity the
+  wrapper entry rethrows, so `instanceof` classification holds.
+- **Smoke runs via jiti, not tsx**: tsx's esbuild-style interop breaks
+  `dssrf → ip-cidr@4.0.2` (the `ip-address@9` `__esModule: true`-without-`exports.default`
+  trap). jiti 2.7.0 — the same loader *and version* pi uses — handles it, so
+  `pnpm smoke` = `jiti scripts/smoke.ts`; `ip-cidr` stays at the version dssrf pins/tests.
+
 ## Out of scope
 
 npm publishing; image tools; PDF; per-call config beyond `maxChars`/`findInPage`/`page`;
